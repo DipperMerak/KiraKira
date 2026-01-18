@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无边框色感挑战</title>
+    <style>
+        /* --- 页面背景样式 --- */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #eef2f5;
+            background-image: linear-gradient(45deg, #e0e4e8 25%, transparent 25%, transparent 75%, #e0e4e8 75%, #e0e4e8), 
+                              linear-gradient(45deg, #e0e4e8 25%, transparent 25%, transparent 75%, #e0e4e8 75%, #e0e4e8);
+            background-position: 0 0, 10px 10px;
+            background-size: 20px 20px;
+            height: 100vh;
+            display: flex; /* 使用 Flex 布局将内容居中 */
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        /* --- 游戏窗口 (Iframe) 样式 --- */
+        .game-window {
+            width: 600px;  /* 游戏区域宽度 */
+            height: 500px; /* 游戏区域高度 */
+            border: none;  /* 移除 iframe 默认边框 */
+            border-radius: 16px; /* 圆角效果 */
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.35); /* 悬浮阴影效果 */
+            overflow: hidden; /* 确保内部内容不会溢出圆角 */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 游戏直接通过一个 Iframe 呈现，不再有设备外壳 -->
+    <iframe id="game-frame" class="game-window" title="Color Game"></iframe>
+
+    <script>
+        // ------------------------------------------------------------
+        // 游戏核心代码 (作为字符串注入 Iframe)
+        // 这部分代码与之前版本完全相同
+        // ------------------------------------------------------------
+        const gameSourceCode = `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+    /* 内部样式：完全居中，极简设计 */
+    * { margin: 0; padding: 0; box-sizing: border-box; touch-action: manipulation; user-select: none; }
+    body { 
+        background: #222; color: #fff; font-family: sans-serif;
+        height: 100vh; width: 100vw; 
+        display: flex; flex-direction: column; justify-content: center; align-items: center; 
+        overflow: hidden;
+    }
+    
+    /* 顶部信息条 */
+    header { 
+        width: 80vmin; display: flex; justify-content: space-between; align-items: center; 
+        font-size: 1.5rem; margin-bottom: 2vmin; font-weight: bold; color: #ccc;
+    }
+    .time-bar-box { flex: 1; height: 10px; background: #333; margin: 0 20px; border-radius: 5px; overflow: hidden; }
+    #time-bar { height: 100%; background: #4CAF50; width: 100%; transition: width 0.1s linear; }
+
+    /* 游戏棋盘 (使用 vmin 确保在横屏下不溢出) */
+    #board {
+        width: 80vmin; height: 80vmin; 
+        background: #fff; padding: 1vmin; border-radius: 12px;
+        display: grid; gap: 1vmin;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .block { border-radius: 6px; cursor: pointer; transition: transform 0.1s; width: 100%; height: 100%; }
+    .block:active { transform: scale(0.95); }
+
+    /* 全屏遮罩 (开始/结束) */
+    #overlay {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(34, 34, 34, 0.95); z-index: 10;
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
+        transition: opacity 0.3s;
+    }
+    
+    /* 仅有的按钮样式 */
+    button {
+        padding: 20px 60px; font-size: 2rem; border: none; border-radius: 100px;
+        background: #4CAF50; color: white; cursor: pointer; 
+        box-shadow: 0 10px 30px rgba(76, 175, 80, 0.3);
+        transition: transform 0.2s, background 0.2s;
+        font-weight: bold; letter-spacing: 2px;
+    }
+    button:hover { background: #45a049; }
+    button:active { transform: scale(0.95); }
+
+    /* 结算时的分数文字 */
+    #result-msg { font-size: 3rem; color: #fff; margin-bottom: 40px; font-weight: bold; }
+    
+    .hidden { opacity: 0; pointer-events: none; }
+    .hidden-display { display: none !important; }
+</style>
+</head>
+<body>
+
+    <header>
+        <span id="score">Lv.1</span>
+        <div class="time-bar-box"><div id="time-bar"></div></div>
+        <span id="timer-text">5.0</span>
+    </header>
+
+    <div id="board"></div>
+
+    <div id="overlay">
+        <!-- 初始状态这里什么都没有，只有一个按钮 -->
+        <div id="result-msg" class="hidden-display"></div>
+        <button id="action-btn" onclick="startGame()">开始挑战</button>
+    </div>
+
+<script>
+    const state = { level: 1, size: 2, timeMax: 5, timeLeft: 5, timer: null };
+    const board = document.getElementById('board');
+    const overlay = document.getElementById('overlay');
+    const resultMsg = document.getElementById('result-msg');
+    const actionBtn = document.getElementById('action-btn');
+    const timeBar = document.getElementById('time-bar');
+    const timeText = document.getElementById('timer-text');
+    const scoreEl = document.getElementById('score');
+
+    function startGame() {
+        state.level = 1; 
+        state.size = 2;
+        overlay.classList.add('hidden');
+        resultMsg.classList.add('hidden-display');
+        nextLevel();
+    }
+
+    function nextLevel() {
+        scoreEl.innerText = 'Lv.' + state.level;
+        if (state.level > 1 && state.level % 2 === 0 && state.size < 8) state.size++;
+        state.timeMax = Math.max(2.0, 6 - state.level * 0.15); 
+        state.timeLeft = state.timeMax;
+        startTimer();
+        generateBoard();
+    }
+
+    function generateBoard() {
+        const h = Math.floor(Math.random() * 360); 
+        const s = 60 + Math.random() * 30; 
+        const l = 40 + Math.random() * 40; 
+        const diff = Math.max(2, 25 - state.level);
+        const targetL = (Math.random() > 0.5) ? l + diff : l - diff;
+        const c1 = \`hsl(\${h}, \${s}%, \${l}%)\`;
+        const c2 = \`hsl(\${h}, \${s}%, \${targetL}%)\`;
+
+        board.style.gridTemplateColumns = \`repeat(\${state.size}, 1fr)\`;
+        board.innerHTML = '';
+
+        const total = state.size * state.size;
+        const targetIndex = Math.floor(Math.random() * total);
+        const frag = document.createDocumentFragment();
+
+        for (let i = 0; i < total; i++) {
+            const div = document.createElement('div');
+            div.className = 'block';
+            div.style.backgroundColor = (i === targetIndex) ? c2 : c1;
+            div.onmousedown = div.ontouchstart = (e) => {
+                e.preventDefault(); 
+                if(i === targetIndex) { handleSuccess(); }
+            };
+            frag.appendChild(div);
+        }
+        board.appendChild(frag);
+    }
+
+    function handleSuccess() { stopTimer(); state.level++; nextLevel(); }
+
+    function startTimer() {
+        stopTimer(); 
+        updateTimerUI();
+        state.timer = setInterval(() => {
+            state.timeLeft -= 0.1;
+            if (state.timeLeft <= 0) gameOver();
+            else updateTimerUI();
+        }, 100);
+    }
+
+    function stopTimer() { if (state.timer) clearInterval(state.timer); }
+
+    function updateTimerUI() {
+        const pct = (state.timeLeft / state.timeMax) * 100;
+        timeBar.style.width = pct + '%';
+        timeBar.style.backgroundColor = pct < 30 ? '#ff5252' : '#4CAF50';
+        timeText.innerText = state.timeLeft.toFixed(1);
+    }
+
+    function gameOver() {
+        stopTimer();
+        resultMsg.innerText = \`最终成绩: Lv.\${state.level - 1}\`;
+        resultMsg.classList.remove('hidden-display');
+        actionBtn.innerText = "再试一次";
+        overlay.classList.remove('hidden');
+    }
+<\/script>
+</body>
+</html>
+        `;
+
+        // 页面加载完成后注入代码
+        window.onload = function() {
+            const frame = document.getElementById('game-frame');
+            frame.srcdoc = gameSourceCode;
+        };
+    </script>
+</body>
+</html>
