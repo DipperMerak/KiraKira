@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"> <!-- 禁止缩放 -->
+    <title>原生JS重构拼图游戏</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #2f363e; font-family: sans-serif; overflow: hidden; user-select: none; /* 禁止选中文本 */ }
+        
+        #start-screen { text-align: center; color: #fff; width: 90%; z-index: 100; }
+        #start-btn { padding: 15px 30px; font-size: 1.2em; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background 0.3s; margin-top: 20px; }
+        
+        #game-screen { display: none; flex-direction: column; justify-content: center; align-items: center; gap: 15px; width: 100%; height: 100vh; padding: 10px; }
+        .hidden { display: none !important; }
+
+        /* 待拼区域 */
+        .drag { 
+            display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; 
+            width: 100%; max-width: 340px; 
+            padding: 10px; background: rgba(255,255,255,0.1); border-radius: 10px; 
+            /* 移除固定高度，让内容撑开 */
+        }
+        
+        /* 拼图板 */
+        .board { 
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; 
+            width: 90vw; height: 90vw; /* 这里的 height: 90vw 是为了让整体板子是正方形 */
+            max-width: 320px; max-height: 320px; 
+            background: #fff; padding: 2px; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        /* 格子容器 */
+        .dragBox, .dropBox { 
+            position: relative; 
+            width: 100%; 
+            /* height: 100%;  <-- 删除这个，由 grid 自动拉伸 */
+            background: rgba(0,0,0,0.2); 
+            overflow: hidden; 
+        }
+        
+        /* 待拼区域的格子尺寸 */
+        .drag .dragBox { 
+            width: 30%; 
+            /* height: 80px; <-- 我们将用 JS 动态设置这个高度 */
+        }
+
+        /* 拼图块 */
+        .images { 
+            width: 100%; height: 100%; 
+            background-image: var(--img); background-size: cover; 
+            display: block; /* 确保它是块级 */
+        }
+        
+        /* 拖拽时的样式（克隆体） */
+        .dragging-clone {
+            position: fixed; /* 固定定位，跟随手指 */
+            z-index: 9999;
+            pointer-events: none; /* 让事件穿透，以便检测底下的元素 */
+            opacity: 0.8;
+            transform: scale(1.1);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        }
+
+        /* 占位符样式 (拖走后留下的空位) */
+        .placeholder { opacity: 0.3; }
+
+        .reset { margin-top: 15px; padding: 10px 25px; border: none; background: #fff; color: #222; font-size: 1em; font-weight: bold; cursor: pointer; border-radius: 5px; }
+
+        @media (min-width: 768px) {
+            #game-screen { flex-direction: row; gap: 50px; }
+            .drag { width: 320px; }
+            .board { width: 320px; height: 320px; }
+            .drag .dragBox { width: 100px; height: 100px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen">
+        <h3>模型思考时间太久的话就来玩拼图吧(´・ω・`)</h3>
+        <button id="start-btn" onclick="startGame()">开始游戏</button>
+    </div>
+
+    <div id="game-screen" class="hidden">
+        <div class="drag" id="drag">
+            <!-- 待拼格子 -->
+            <div class="dragBox"></div><div class="dragBox"></div><div class="dragBox"></div>
+            <div class="dragBox"></div><div class="dragBox"></div><div class="dragBox"></div>
+            <div class="dragBox"></div><div class="dragBox"></div><div class="dragBox"></div>
+        </div>
+
+        <div class="board" id="board">
+            <!-- 目标格子 -->
+            <div class="dropBox"></div><div class="dropBox"></div><div class="dropBox"></div>
+            <div class="dropBox"></div><div class="dropBox"></div><div class="dropBox"></div>
+            <div class="dropBox"></div><div class="dropBox"></div><div class="dropBox"></div>
+        </div>
+
+        <button class="reset" onclick="resetGame()">重置</button>
+    </div>
+
+    <script>
+        // 1. 初始化拼图块
+        // 为了代码整洁，我们用 JS 动态生成拼图块，而不是在 HTML 里写死
+        // 图片资源数组（请替换为实际图片路径）图1到9的顺序为：
+        // 1 2 3
+        // 4 5 6
+        // 7 8 9
+        // 将切割好的图片全部上传至图床后，将链接按以上顺序填入数组
+        const puzzleData = [
+            '','','',
+            '','','',
+            '','',''
+        ];
+
+        let activePiece = null; // 当前拖动的原元素
+        let clonePiece = null;  // 跟随手指的克隆元素
+        let startParent = null; // 拖动前的父容器
+
+        function createPieces() {
+            const dragBoxes = document.querySelectorAll('.drag .dragBox');
+            dragBoxes.forEach((box, index) => {
+                if (index < puzzleData.length) {
+                    const div = document.createElement('div');
+                    div.className = 'images';
+                    div.id = 'block' + (index + 1);
+                    div.style.setProperty('--img', `url(${puzzleData[index]})`);
+                    
+                    // 绑定通用事件
+                    addDragEvents(div);
+                    
+                    // 先清空，再放入
+                    box.innerHTML = '';
+                    box.appendChild(div);
+                }
+            });
+        }
+
+        // 2. 绑定拖拽事件 (核心逻辑)
+        function addDragEvents(element) {
+            // 触摸事件
+            element.addEventListener('touchstart', handleStart, {passive: false});
+            element.addEventListener('touchmove', handleMove, {passive: false});
+            element.addEventListener('touchend', handleEnd);
+            
+            // 鼠标事件 (兼容PC)
+            element.addEventListener('mousedown', handleStart);
+        }
+
+        // --- 拖拽处理函数 ---
+
+        function handleStart(e) {
+            e.preventDefault(); // 防止滚动
+            
+            // 获取坐标
+            const point = e.touches ? e.touches[0] : e;
+            
+            activePiece = e.target;
+            startParent = activePiece.parentNode;
+
+            // 创建克隆体用于跟随展示
+            clonePiece = activePiece.cloneNode(true);
+            clonePiece.classList.add('dragging-clone');
+            
+            // 设置克隆体初始大小和位置
+            const rect = activePiece.getBoundingClientRect();
+            clonePiece.style.width = rect.width + 'px';
+            clonePiece.style.height = rect.height + 'px';
+            clonePiece.style.left = rect.left + 'px';
+            clonePiece.style.top = rect.top + 'px';
+            
+            document.body.appendChild(clonePiece);
+            
+            // 原元素变半透明占位
+            activePiece.classList.add('placeholder');
+
+            // 鼠标移动监听 (如果是鼠标操作)
+            if (!e.touches) {
+                document.addEventListener('mousemove', handleMove);
+                document.addEventListener('mouseup', handleEnd);
+            }
+        }
+
+        function handleMove(e) {
+            e.preventDefault();
+            if (!clonePiece) return;
+
+            const point = e.touches ? e.touches[0] : e;
+            
+            // 更新克隆体位置 (居中跟随)
+            const w = parseFloat(clonePiece.style.width);
+            const h = parseFloat(clonePiece.style.height);
+            clonePiece.style.left = (point.clientX - w / 2) + 'px';
+            clonePiece.style.top = (point.clientY - h / 2) + 'px';
+        }
+
+        function handleEnd(e) {
+            if (!clonePiece) return;
+
+            // 获取手指/鼠标抬起时的坐标
+            // touchend 事件没有 touches，只有 changedTouches
+            const point = e.changedTouches ? e.changedTouches[0] : e;
+            
+            // 隐藏克隆体，以便 document.elementFromPoint 能探测到底下的元素
+            clonePiece.style.display = 'none';
+            
+            // 检测底下是什么元素
+            let elemBelow = document.elementFromPoint(point.clientX, point.clientY);
+            
+            // 找到最近的目标格子 (.dropBox 或 .dragBox)
+            let targetBox = elemBelow ? elemBelow.closest('.dropBox, .dragBox') : null;
+
+            // 判定放置逻辑
+            if (targetBox && targetBox.children.length === 0) {
+                // 如果是空格子，放入
+                targetBox.appendChild(activePiece);
+            } else {
+                // 否则，回弹 (什么都不做，activePiece 还在原位，只需移除样式)
+            }
+
+            // 清理工作
+            activePiece.classList.remove('placeholder');
+            if (clonePiece) {
+                clonePiece.remove();
+                clonePiece = null;
+            }
+            activePiece = null;
+            startParent = null;
+
+            // 移除鼠标监听
+            document.removeEventListener('mousemove', handleMove);
+            document.removeEventListener('mouseup', handleEnd);
+        }
+
+
+        // --- 游戏流程控制 ---
+
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            const gameScreen = document.getElementById('game-screen');
+            gameScreen.classList.remove('hidden');
+            gameScreen.style.display = 'flex';
+            
+            // 首次生成
+            createPieces();
+            shufflePuzzle();
+        }
+
+        // --- 新增：动态调整高度函数 ---
+        function resizeGameElements() {
+            // 1. 获取待拼区域的所有格子
+            const dragBoxes = document.querySelectorAll('.drag .dragBox');
+            if (dragBoxes.length > 0) {
+                // 获取第一个格子的当前宽度
+                const width = dragBoxes[0].offsetWidth;
+                // 强制将高度设置为与宽度一致，实现正方形
+                dragBoxes.forEach(box => {
+                    box.style.height = width + 'px';
+                });
+            }
+        }
+
+        // --- 游戏流程控制 ---
+
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            const gameScreen = document.getElementById('game-screen');
+            gameScreen.classList.remove('hidden');
+            gameScreen.style.display = 'flex';
+            
+            // 首次生成
+            createPieces();
+            
+            // 关键：在显示后立即计算高度
+            resizeGameElements(); 
+            
+            shufflePuzzle();
+        }
+
+        // 监听窗口大小变化（横竖屏切换时）
+        window.addEventListener('resize', resizeGameElements);
+
+        function shufflePuzzle() {
+            const dragContainer = document.getElementById('drag');
+            const pieces = Array.from(document.querySelectorAll('.images'));
+            const dragBoxes = Array.from(dragContainer.querySelectorAll('.dragBox'));
+            
+            // 随机排序
+            pieces.sort(() => Math.random() - 0.5);
+            
+            // 将乱序后的图片放回待选区
+            pieces.forEach((piece, i) => {
+                if (dragBoxes[i]) {
+                    dragBoxes[i].appendChild(piece);
+                }
+            });
+            
+            // 清空拼图板
+            const dropBoxes = document.querySelectorAll('.board .dropBox');
+            dropBoxes.forEach(box => {
+                if (box.children.length > 0) {
+                    // 如果板上有残留，移回 dragBox (但这步其实上面的 forEach 已经处理了所有 .images)
+                }
+            });
+        }
+
+        function resetGame() {
+            // 获取所有拼图块
+            const allPieces = [];
+            for(let i=1; i<=9; i++) {
+                const p = document.getElementById('block'+i);
+                if(p) allPieces.push(p);
+            }
+            
+            // 获取所有待选框
+            const dragBoxes = document.querySelectorAll('.drag .dragBox');
+            
+            // 归位
+            allPieces.forEach((p, i) => {
+                if(dragBoxes[i]) dragBoxes[i].appendChild(p);
+            });
+            
+            shufflePuzzle();
+        }
+    </script>
+</body>
+</html>
